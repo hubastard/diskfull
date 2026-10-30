@@ -5,6 +5,7 @@ import "core:hash"
 import "core:math"
 import "core:mem/virtual"
 import "core:path/filepath"
+import "core:slice"
 import "core:strings"
 import rl "vendor:raylib"
 
@@ -33,19 +34,40 @@ Layout :: struct {
 	arena: virtual.Arena,
 	font:  rl.Font,
 	mode:  Color_Mode,
+	live:  bool, // laid out during the scan: sizes still change and children are not sorted yet
+	top:   []Item, // the view's children, biggest first, with the sizes they were laid out with
 }
 
 layout_build :: proc(l: ^Layout, view: ^Node, r: rl.Rectangle) {
 	clear(&l.tiles)
 	virtual.arena_free_all(&l.arena)
-	if view == nil || view.size <= 0 {
+	l.top = nil
+	if view == nil || node_size(view) <= 0 {
 		return
 	}
 	squarify(l, view, r, 1, 0)
 }
 
+Item :: struct {
+	node: ^Node,
+	size: i64,
+}
+
+// A directory's children with their sizes read once, biggest first.
+sorted_children :: proc(n: ^Node, live: bool, allocator := context.temp_allocator) -> []Item {
+	kids := live_children(n)
+	items := make([]Item, len(kids), allocator)
+	for c, i in kids {
+		items[i] = {c, node_size(c)}
+	}
+	if live {
+		slice.sort_by(items, proc(a, b: Item) -> bool {return a.size > b.size})
+	}
+	return items
+}
+
 @(private = "file")
-layout_node :: proc(l: ^Layout, n: ^Node, r: rl.Rectangle, depth: i32, hue: f32) {
+layout_node :: proc(l: ^Layout, n: ^Node, size: i64, r: rl.Rectangle, depth: i32, hue: f32) {
 	t := Tile {
 		rect  = r,
 		node  = n,
@@ -57,17 +79,17 @@ layout_node :: proc(l: ^Layout, n: ^Node, r: rl.Rectangle, depth: i32, hue: f32)
 	header := is_dir && r.width >= 48 && r.height >= 34
 	alloc := virtual.arena_allocator(&l.arena)
 	if header {
-		text := fmt.aprintf("%s  %s", n.name, format_size(n.size), allocator = alloc)
+		text := fmt.aprintf("%s  %s", n.name, format_size(size), allocator = alloc)
 		t.label = fit_text(l.font, text, 12, r.width - 8, alloc)
 	} else if !is_dir && r.width >= 50 && r.height >= 18 {
 		t.label = fit_text(l.font, n.name, 12, r.width - 8, alloc)
 		if r.height >= 34 {
-			t.label2 = fit_text(l.font, format_size(n.size), 12, r.width - 8, alloc)
+			t.label2 = fit_text(l.font, format_size(size), 12, r.width - 8, alloc)
 		}
 	}
 	append(&l.tiles, t)
 
-	if !is_dir || len(n.children) == 0 || r.width < 8 || r.height < 8 {
+	if !is_dir || len(live_children(n)) == 0 || r.width < 8 || r.height < 8 {
 		return
 	}
 	pad: f32 = 2 if r.width >= 40 && r.height >= 40 else 1
@@ -79,11 +101,13 @@ layout_node :: proc(l: ^Layout, n: ^Node, r: rl.Rectangle, depth: i32, hue: f32)
 	squarify(l, n, inner, depth + 1, hue)
 }
 
-// Squarified treemap (Bruls, Huizing, van Wijk). Children are already sorted
-// biggest first by the scanner.
+// Squarified treemap (Bruls, Huizing, van Wijk), biggest children first.
 @(private = "file")
 squarify :: proc(l: ^Layout, parent: ^Node, r: rl.Rectangle, depth: i32, hue: f32) {
-	kids := parent.children
+	kids := sorted_children(parent, l.live, virtual.arena_allocator(&l.arena))
+	if depth == 1 {
+		l.top = kids
+	}
 	sum: f64
 	for c in kids {
 		sum += f64(c.size)
@@ -93,7 +117,7 @@ squarify :: proc(l: ^Layout, parent: ^Node, r: rl.Rectangle, depth: i32, hue: f3
 	}
 	x, y, w, h := f64(r.x), f64(r.y), f64(r.width), f64(r.height)
 	scale := w * h / sum
-	area :: #force_inline proc(n: ^Node, scale: f64) -> f64 {return f64(n.size) * scale}
+	area :: #force_inline proc(c: Item, scale: f64) -> f64 {return f64(c.size) * scale}
 
 	i := 0
 	for i < len(kids) && kids[i].size > 0 {
@@ -141,7 +165,7 @@ squarify :: proc(l: ^Layout, parent: ^Node, r: rl.Rectangle, depth: i32, hue: f3
 			cy := y
 			for k in i ..< j {
 				kh := area(kids[k], scale) / thick
-				layout_node(l, kids[k], {f32(x), f32(cy), f32(thick), f32(kh)}, depth, child_hue(depth, k, hue))
+				layout_node(l, kids[k].node, kids[k].size, {f32(x), f32(cy), f32(thick), f32(kh)}, depth, child_hue(depth, k, hue))
 				cy += kh
 			}
 			x += thick
@@ -151,7 +175,7 @@ squarify :: proc(l: ^Layout, parent: ^Node, r: rl.Rectangle, depth: i32, hue: f3
 			cx := x
 			for k in i ..< j {
 				kw := area(kids[k], scale) / thick
-				layout_node(l, kids[k], {f32(cx), f32(y), f32(kw), f32(thick)}, depth, child_hue(depth, k, hue))
+				layout_node(l, kids[k].node, kids[k].size, {f32(cx), f32(y), f32(kw), f32(thick)}, depth, child_hue(depth, k, hue))
 				cx += kw
 			}
 			y += thick

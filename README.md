@@ -23,7 +23,8 @@ reveal them in Finder, Explorer or your file manager.
 
 ## Features
 
-- **Fast**: a multi-threaded scan, with a live progress view while it runs.
+- **Fast**: a multi-threaded scan, and the treemap fills in while it runs, so the biggest
+  folders show up within a second or two. You can hover, click and zoom right away.
 - **True sizes**: counts the space allocated on disk, so sparse and compressed files,
   APFS clones and hard links are counted for what they really use, and only once.
 - **Finds hidden space**: on a whole-disk scan, compares what the folders add up to

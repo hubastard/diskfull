@@ -1,6 +1,7 @@
 package diskfull
 
 import "core:fmt"
+import "core:math"
 import "core:os"
 import "core:strings"
 import "core:sync"
@@ -12,6 +13,7 @@ TOP_H :: 44
 STATUS_H :: 28
 PANEL_W :: 360
 LARGEST_COUNT :: 100
+LIVE_REFRESH :: 0.25 // seconds between layouts while the scan runs
 
 Panel_Mode :: enum {
 	Contents,
@@ -25,6 +27,7 @@ App :: struct {
 	layout_view:  ^Node,
 	layout_rect:  rl.Rectangle,
 	layout_mode:  Color_Mode,
+	layout_time:  f64,
 	color_mode:   Color_Mode,
 	panel_mode:   Panel_Mode,
 	largest:      [dynamic]^Node,
@@ -126,6 +129,7 @@ start_scan :: proc(path: string) {
 	app.panel_hover = nil
 	clear(&app.layout.tiles)
 	clear(&app.largest)
+	app.layout.top = nil
 
 	app.scanner = scanner_start(resolved)
 	delete(app.disk.mount)
@@ -173,12 +177,11 @@ update :: proc() {
 		start_scan(strings.clone(s.root_path, context.temp_allocator))
 		return
 	}
-	if !scanner_done(s) {
-		return
-	}
 	if app.view == nil {
 		app.view = s.root
 	}
+	// The map and panel show the tree while it is being scanned.
+	scanning := !scanner_done(s)
 
 	if (rl.IsKeyPressed(.BACKSPACE) || rl.IsKeyPressed(.ESCAPE) || rl.IsKeyPressed(.UP)) && app.view.parent != nil {
 		app.view = app.view.parent
@@ -194,12 +197,14 @@ update :: proc() {
 	}
 
 	mr := map_rect()
-	if app.view != app.layout_view || mr != app.layout_rect || app.color_mode != app.layout_mode {
-		app.layout.mode = app.color_mode
+	clock := rl.GetTime()
+	changed := app.view != app.layout_view || mr != app.layout_rect || app.color_mode != app.layout_mode
+	if changed || app.layout.live != scanning || (scanning && clock - app.layout_time > LIVE_REFRESH) {
+		app.layout.mode, app.layout.live = app.color_mode, scanning
 		layout_build(&app.layout, app.view, mr)
-		app.layout_view, app.layout_rect, app.layout_mode = app.view, mr, app.color_mode
+		app.layout_view, app.layout_rect, app.layout_mode, app.layout_time = app.view, mr, app.color_mode, clock
 	}
-	if app.panel_mode == .Largest && app.largest_view != app.view {
+	if app.panel_mode == .Largest && !scanning && app.largest_view != app.view {
 		clear(&app.largest)
 		collect_largest(app.view)
 		app.largest_view = app.view
@@ -257,7 +262,7 @@ update :: proc() {
 }
 
 zoom_to :: proc(n: ^Node) {
-	if n != nil && .Dir in n.flags && n.size > 0 && len(n.children) > 0 {
+	if n != nil && .Dir in n.flags && node_size(n) > 0 && len(live_children(n)) > 0 {
 		app.view = n
 	}
 }
@@ -297,10 +302,6 @@ collect_largest :: proc(n: ^Node) {
 }
 
 draw :: proc() {
-	if !scanner_done(app.scanner) {
-		draw_progress()
-		return
-	}
 	if app.view == nil {
 		return
 	}
@@ -311,55 +312,21 @@ draw :: proc() {
 	draw_tooltip()
 }
 
-draw_progress :: proc() {
-	s := app.scanner
-	w, h := view_w(), view_h()
-	cw: f32 = 600
-	x, y := (w - cw) / 2, h / 2 - 120
-
-	files := sync.atomic_load(&s.files)
-	dirs := sync.atomic_load(&s.dirs)
-	bytes := sync.atomic_load(&s.bytes)
-	denied := sync.atomic_load(&s.denied)
-	elapsed := time.duration_seconds(time.tick_since(s.start))
-
-	text(fit(fmt_scanning(s.root_path), cw, .Large), x, y, .Large)
-	y += 40
-
-	bar := rl.Rectangle{x, y, cw, 8}
-	rl.DrawRectangleRounded(bar, 1, 8, COL_LINE)
-	if app.disk_ok && app.whole_disk {
-		used := app.disk.used
-		frac := clamp(f32(f64(bytes) / f64(max(used, 1))), 0.02, 0.99)
-		rl.DrawRectangleRounded({x, y, cw * frac, 8}, 1, 8, COL_ACCENT)
-	} else {
-		p := f32(elapsed * 0.6 - f64(int(elapsed * 0.6)))
-		rl.DrawRectangleRounded({x + (cw - 120) * p, y, 120, 8}, 1, 8, COL_ACCENT)
-	}
-	y += 26
-
-	text(cs("%s found   ·   %s files   ·   %s folders   ·   %.0f s", format_size(bytes), format_count(files), format_count(dirs), elapsed), x, y)
-	y += 24
-	if cur := sync.atomic_load(&s.current); cur != nil {
-		text(fit(node_path(cur), cw, .Small), x, y, .Small, COL_DIM)
-	}
-	y += 30
-	if denied > 0 {
-		text(cs("%s folders could not be read", format_count(denied)), x, y, .Small, COL_WARN)
-		y += 18
-	}
-	for line in wrap(PERMISSION_HINT, cw, .Small) {
-		text(line, x, y, .Small, COL_DIM)
-		y += 16
-	}
-}
-
-fmt_scanning :: proc(path: string) -> string {
-	return strings.concatenate({"Scanning ", path, " …"}, context.temp_allocator)
-}
-
 draw_map :: proc() {
 	tiles := app.layout.tiles[:]
+	if len(tiles) == 0 && !scanner_done(app.scanner) {
+		// The first folders are not done yet.
+		mr := map_rect()
+		cw := min(mr.width - 40, 600)
+		x, y := mr.x + (mr.width - cw) / 2, mr.y + mr.height / 2 - 40
+		text(fit(strings.concatenate({"Scanning ", app.scanner.root_path, " …"}, context.temp_allocator), cw, .Large), x, y, .Large)
+		y += 36
+		for line in wrap(PERMISSION_HINT, cw, .Small) {
+			text(line, x, y, .Small, COL_DIM)
+			y += 16
+		}
+		return
+	}
 	for t in tiles {
 		r := t.rect
 		if t.rest == 0 && .Dir in t.node.flags {
@@ -406,7 +373,7 @@ draw_top_bar :: proc() {
 	rl.DrawRectangleRec({0, 0, w, TOP_H}, COL_PANEL)
 	rl.DrawRectangleRec({0, TOP_H - 1, w, 1}, COL_LINE)
 
-	info := cs("%s   ·   %s", format_size(app.view.size), format_files(app.view.files))
+	info := cs("%s   ·   %s", format_size(node_size(app.view)), format_files(node_files(app.view)))
 	info_w := text_width(info)
 	text_right(info, w - 16, 14, .Normal, COL_DIM)
 
@@ -461,11 +428,14 @@ draw_panel :: proc() {
 
 	x, y, w := pr.x + 16, pr.y + 14, pr.width - 32
 	s := app.scanner
-	scanned := s.root.size
+	scanning := !scanner_done(s)
+	scanned := node_size(s.root)
+	purgeable := sync.atomic_load(&s.purgeable)
+	denied := sync.atomic_load(&s.denied)
 
 	if app.disk_ok {
 		total, used, free := app.disk.total, app.disk.used, app.disk.free
-		hidden := max(used - scanned, 0) if app.whole_disk else 0
+		hidden := max(used - scanned, 0) if app.whole_disk && !scanning else 0
 
 		text("DISK", x, y, .Small, COL_DIM)
 		text_right(fit(app.disk.mount, w - 60, .Small), x + w, y, .Small, COL_DIM)
@@ -497,11 +467,13 @@ draw_panel :: proc() {
 			text_right(cs("%s", format_size(value)), x + w, y)
 		}
 		if app.whole_disk {
-			row("Found by scan", scanned, x, y, w, COL_ACCENT); y += 20
-			if s.purgeable > 0 {
-				row("   of which purgeable", s.purgeable, x, y, w); y += 20
+			row("Found so far" if scanning else "Found by scan", scanned, x, y, w, COL_ACCENT); y += 20
+			if purgeable > 0 {
+				row("   of which purgeable", purgeable, x, y, w); y += 20
 			}
-			row("Hidden from scan", hidden, x, y, w, COL_WARN); y += 20
+			if !scanning {
+				row("Hidden from scan", hidden, x, y, w, COL_WARN); y += 20
+			}
 			row("Free", free, x, y, w, COL_LINE); y += 20
 			row("Disk size", total, x, y, w); y += 24
 		} else {
@@ -517,8 +489,8 @@ draw_panel :: proc() {
 			y += 6
 		}
 	}
-	if s.denied > 0 {
-		text(cs("%s folders could not be read", format_count(s.denied)), x, y, .Small, COL_WARN)
+	if denied > 0 {
+		text(cs("%s could not be read", "1 folder" if denied == 1 else fmt.tprintf("%s folders", format_count(denied))), x, y, .Small, COL_WARN)
 		y += 15
 		text(DENIED_HINT, x, y, .Small, COL_DIM)
 		y += 21
@@ -552,19 +524,41 @@ draw_panel :: proc() {
 
 	ROW_H :: 38
 	bottom := pr.y + pr.height - 24 // keep room for the "+ N more" line
-	items: []^Node
-	if app.panel_mode == .Contents {
-		items = app.view.children
+	// Rows, biggest first. While scanning, they are the children the map was
+	// laid out with, sizes included, so both agree.
+	nodes: []^Node
+	if app.panel_mode == .Largest && scanning {
+		text("Shown when the scan is done.", x, y + 6, .Small, COL_DIM)
+	} else if app.panel_mode == .Largest {
+		nodes = app.largest[:]
+	} else if !scanning {
+		nodes = app.view.children
+	}
+	top := app.layout.top if app.panel_mode == .Contents else nil
+	count := len(top) if scanning else len(nodes)
+	total: i64
+	if scanning {
+		for c in top {
+			total += c.size
+		}
 	} else {
-		items = app.largest[:]
+		total = node_size(app.view)
 	}
 	shown := 0
-	for n, i in items {
-		if n.size <= 0 {
+	for i in 0 ..< count {
+		n: ^Node
+		size: i64
+		if scanning {
+			n, size = top[i].node, top[i].size
+		} else {
+			n = nodes[i]
+			size = node_size(n)
+		}
+		if size <= 0 {
 			break
 		}
 		if y + ROW_H > bottom {
-			remaining := len(items) - shown
+			remaining := count - shown
 			text(cs("+ %s more", format_count(i64(remaining))), x, y + 6, .Small, COL_DIM)
 			break
 		}
@@ -586,14 +580,14 @@ draw_panel :: proc() {
 		}
 		rl.DrawRectangleRounded({x, y + 7, 10, 10}, 0.3 if is_dir else 1, 6, swatch)
 
-		size_s := cs("%s", format_size(n.size))
+		size_s := cs("%s", format_size(size))
 		size_w := text_width(size_s)
 		name := strings.concatenate({n.name, "/" if is_dir else ""}, context.temp_allocator)
 		text(fit(name, w - 18 - size_w - 10), x + 18, y + 4)
 		text_right(size_s, x + w, y + 4, .Normal, COL_DIM)
 
 		if app.panel_mode == .Contents {
-			pct := f64(n.size) / f64(max(app.view.size, 1))
+			pct := f64(size) / f64(max(total, 1))
 			bw := w - 18 - 48
 			rl.DrawRectangleRec({x + 18, y + 25, bw, 3}, COL_LINE)
 			rl.DrawRectangleRec({x + 18, y + 25, bw * f32(pct), 3}, swatch)
@@ -603,7 +597,7 @@ draw_panel :: proc() {
 		}
 
 		if b.clicked {
-			if app.panel_mode == .Contents && is_dir && len(n.children) > 0 {
+			if app.panel_mode == .Contents && is_dir && len(live_children(n)) > 0 {
 				app.view = n
 			} else {
 				reveal_in_file_manager(node_path(n))
@@ -624,6 +618,10 @@ draw_status :: proc() {
 	rl.DrawRectangleRec({0, y, w, 1}, COL_LINE)
 
 	s := app.scanner
+	if !scanner_done(s) {
+		draw_scan_progress(y, w)
+		return
+	}
 	right := cs("%s in %.1f s   ·   C: colors (%s)", format_files(s.root.files), time.duration_seconds(s.elapsed), "folders" if app.color_mode == .Folder else "file types")
 	text_right(right, w - 12, y + 7, .Small, COL_DIM)
 
@@ -636,6 +634,38 @@ draw_status :: proc() {
 		text(fit(node_path(hovered), left_w, .Small), 12, y + 7, .Small)
 	} else {
 		text(fit("Click: show in " + FILE_MANAGER + "   ·   Right-click / scroll up: zoom in   ·   Backspace / scroll down: zoom out   ·   Tab: largest files   ·   R: rescan   ·   " + MOD_KEY + " +/-: text size   ·   Drop a folder to scan it", left_w, .Small), 12, y + 7, .Small, COL_DIM)
+	}
+}
+
+// The status bar while scanning: a progress line on its top edge (a real
+// fraction when scanning a whole disk: found / used), counts and the folder
+// being read, or the hovered item's path.
+draw_scan_progress :: proc(y, w: f32) {
+	s := app.scanner
+	elapsed := time.duration_seconds(time.tick_since(s.start))
+	bytes := sync.atomic_load(&s.bytes)
+	right: cstring
+	if app.whole_disk && app.disk.used > 0 {
+		frac := clamp(f64(bytes) / f64(app.disk.used), 0, 1)
+		rl.DrawRectangleRec({0, y, w * f32(frac), 2}, COL_ACCENT)
+		right = cs("Scanning   ·   %s files   ·   %s of %s   ·   %.0f s", format_count(sync.atomic_load(&s.files)), format_size(bytes), format_size(app.disk.used), elapsed)
+	} else {
+		seg := w * 0.2
+		p := f32(elapsed * 0.5 - math.floor(elapsed * 0.5))
+		rl.DrawRectangleRec({(w + seg) * p - seg, y, seg, 2}, COL_ACCENT)
+		right = cs("Scanning   ·   %s files   ·   %s   ·   %.0f s", format_count(sync.atomic_load(&s.files)), format_size(bytes), elapsed)
+	}
+	text_right(right, w - 12, y + 7, .Small, COL_DIM)
+
+	left_w := w - text_width(right, .Small) - 40
+	hovered: ^Node = app.panel_hover
+	if hovered == nil && app.hover_tile >= 0 {
+		hovered = app.layout.tiles[app.hover_tile].node
+	}
+	if hovered != nil {
+		text(fit(node_path(hovered), left_w, .Small), 12, y + 7, .Small)
+	} else if cur := sync.atomic_load(&s.current); cur != nil {
+		text(fit(node_path(cur), left_w, .Small), 12, y + 7, .Small, COL_DIM)
 	}
 }
 
@@ -659,20 +689,20 @@ draw_tooltip :: proc() {
 	}
 	lines := make([dynamic]Line, context.temp_allocator)
 
-	size := t.rest_size if t.rest > 0 else n.size
+	size := t.rest_size if t.rest > 0 else node_size(n)
 	title := cs("%d smaller items", t.rest) if t.rest > 0 else fit(n.name, inner, .Large)
 	append(&lines, Line{title, .Large, COL_TEXT, 0})
 	for l, i in wrap(path, inner, .Small) {
 		append(&lines, Line{l, .Small, COL_DIM, 4 if i == 0 else 0})
 	}
-	pct_view := format_pct(f64(size) / f64(max(app.view.size, 1)))
+	pct_view := format_pct(f64(size) / f64(max(node_size(app.view), 1)))
 	details := cs("%s   ·   %s of this view", format_size(size), pct_view)
 	if app.disk_ok {
 		details = cs("%s   ·   %s of this view   ·   %s of disk", format_size(size), pct_view, format_pct(f64(size) / f64(max(app.disk.total, 1))))
 	}
 	append(&lines, Line{details, .Normal, COL_TEXT, 8})
 	if is_dir && t.rest == 0 {
-		append(&lines, Line{cs("%s", format_files(n.files)), .Small, COL_DIM, 2})
+		append(&lines, Line{cs("%s", format_files(node_files(n))), .Small, COL_DIM, 2})
 	}
 	if t.rest == 0 && .Denied in n.flags {
 		append(&lines, Line{"Could not read this folder (permission denied)", .Small, COL_WARN, 4})

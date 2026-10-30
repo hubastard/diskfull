@@ -1,5 +1,6 @@
 package diskfull
 
+import "base:runtime"
 import "core:mem/virtual"
 import "core:os"
 import "core:slice"
@@ -19,9 +20,9 @@ Node_Flags :: bit_set[Node_Flag; u8]
 Node :: struct {
 	name:     string, // NUL-terminated in memory, so cstring(raw_data(name)) is valid
 	parent:   ^Node,
-	children: []^Node, // sorted by size, biggest first, once the scan is done
-	size:     i64, // bytes allocated on disk, summed for directories
-	files:    i64, // number of files in the subtree
+	children: []^Node, // sorted by size, biggest first, once the scan is done (see live_children)
+	size:     i64, // bytes allocated on disk, summed for directories; grows during the scan
+	files:    i64, // number of files in the subtree; grows during the scan
 	flags:    Node_Flags,
 }
 
@@ -136,25 +137,37 @@ coordinator_proc :: proc(s: ^Scanner) {
 	if sync.atomic_load(&s.cancel) {
 		return
 	}
-	aggregate(s.root)
+	sort_tree(s.root)
 	s.elapsed = time.tick_since(s.start)
 	sync.atomic_store(&s.done, true)
 }
 
-// Post-order pass: sum sizes up the tree and sort children biggest first.
+// Sizes are final once every directory is scanned (end_dir adds them up the
+// tree as it goes): sort children biggest first.
 @(private = "file")
-aggregate :: proc(n: ^Node) {
-	if .Dir not_in n.flags {
-		return
-	}
-	size, files: i64 = n.size, 0
+sort_tree :: proc(n: ^Node) {
 	for c in n.children {
-		aggregate(c)
-		size += c.size
-		files += c.files
+		if .Dir in c.flags {
+			sort_tree(c)
+		}
 	}
-	n.size, n.files = size, files
 	slice.sort_by(n.children, proc(a, b: ^Node) -> bool {return a.size > b.size})
+}
+
+// The UI reads the tree while the scan builds it, through these.
+
+live_children :: proc(n: ^Node) -> []^Node {
+	raw := (^runtime.Raw_Slice)(&n.children)
+	count := sync.atomic_load_explicit(&raw.len, .Acquire)
+	return ([^]^Node)(raw.data)[:count]
+}
+
+node_size :: proc(n: ^Node) -> i64 {
+	return sync.atomic_load_explicit(&n.size, .Relaxed)
+}
+
+node_files :: proc(n: ^Node) -> i64 {
+	return sync.atomic_load_explicit(&n.files, .Relaxed)
 }
 
 @(private = "file")
@@ -214,7 +227,25 @@ begin_dir :: proc(w: ^Worker, dir: ^Node, path: ^[dynamic]u8, entries, subdirs: 
 }
 
 end_dir :: proc(w: ^Worker, dir: ^Node, entries: ^[dynamic]^Node) {
-	dir.children = slice.clone(entries[:], virtual.arena_allocator(&w.arena))
+	children := slice.clone(entries[:], virtual.arena_allocator(&w.arena))
+	// Publish the children: the length is stored last, so a reader that sees
+	// it (live_children) also sees the elements.
+	raw := (^runtime.Raw_Slice)(&dir.children)
+	raw.data = raw_data(children)
+	sync.atomic_store_explicit(&raw.len, len(children), .Release)
+
+	// Add what this directory directly holds to it and every ancestor, so sizes
+	// are right during the scan too. Subdirectories are scanned after this
+	// returns and add their own contents the same way.
+	bytes, files: i64
+	for c in children {
+		bytes += c.size
+		files += c.files
+	}
+	for a := dir; a != nil; a = a.parent {
+		sync.atomic_add(&a.size, bytes)
+		sync.atomic_add(&a.files, files)
+	}
 }
 
 mark_denied :: proc(s: ^Scanner, dir: ^Node) {
