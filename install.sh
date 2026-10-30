@@ -15,7 +15,7 @@
 set -eu
 
 REPO_URL=https://github.com/hubastard/diskfull
-BUILD_DOCS="$REPO_URL#build--run"
+BUILD_DOCS="$REPO_URL#building-from-source"
 
 say() { printf '%s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }

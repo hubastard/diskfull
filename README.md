@@ -63,17 +63,39 @@ To uninstall, delete `~/.local/bin/diskfull` and, on macOS, `/Applications/DiskF
 
 ### Windows
 
-Download `diskfull-windows-x64.zip` from the
-[latest release](https://github.com/hubastard/diskfull/releases/latest), unzip it and
-run `diskfull.exe`. If SmartScreen warns about an unrecognized app, choose
-**More info › Run anyway**.
+In PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/hubastard/diskfull/main/install.ps1 | iex
+```
+
+This installs `diskfull.exe` in `%LOCALAPPDATA%\Programs\diskfull`, adds that folder to
+your user PATH and adds DiskFull to the Start menu. No administrator rights needed.
+
+<details>
+<summary>Installer options, uninstall</summary>
+
+```powershell
+$env:DISKFULL_VERSION = 'v0.1.0'         # a specific release
+$env:DISKFULL_INSTALL_DIR = 'D:\Tools'   # where diskfull.exe goes
+irm https://raw.githubusercontent.com/hubastard/diskfull/main/install.ps1 | iex
+```
+
+To uninstall, delete `%LOCALAPPDATA%\Programs\diskfull` and the DiskFull Start menu
+shortcut, and remove the folder from PATH in "Edit environment variables for your
+account".
+</details>
 
 ### Manual download
 
 Every release has builds for macOS (Apple Silicon), Linux (x64, arm64; glibc 2.35+,
-X11 or XWayland) and Windows (x64). The macOS app is not notarized: if you download it
-with a browser, allow it the first time in System Settings › Privacy & Security ›
-Open Anyway, or run `xattr -dr com.apple.quarantine DiskFull.app`.
+X11 or XWayland) and Windows (x64; ARM64 runs it under emulation). Unzip and run.
+
+- The macOS app is not notarized: if you download it with a browser, allow it the first
+  time in System Settings › Privacy & Security › Open Anyway, or run
+  `xattr -dr com.apple.quarantine DiskFull.app`.
+- On Windows, if SmartScreen warns about an unrecognized app, choose
+  **More info › Run anyway**.
 
 ## Usage
 
@@ -149,7 +171,8 @@ src/
   ui.odin               text, formatting, notes about well-known folders
   platform*.odin        per-OS code: volumes, file manager, APFS details
 tests/                  unit tests, including a scan of a generated folder tree
-install.sh              one-line installer
+install.sh              one-line installer for macOS and Linux
+install.ps1             one-line installer for Windows
 ```
 
 ## Contributing
@@ -162,9 +185,9 @@ odin test tests
 ./diskfull --screenshot out.png ~/some/folder   # scan, save the window as PNG, quit
 ```
 
-CI checks, tests and builds every push on Linux (x64, arm64), Windows and macOS, and
-saves a screenshot of the running app on each. Pushing a `v*` tag publishes a release
-and checks that the installer works with it.
+CI checks, tests and builds every push on Linux (x64, arm64), Windows and macOS, saves a
+screenshot of the running app on each, and runs the installers. Pushing a `v*` tag
+publishes a release.
 
 ## Acknowledgements
 

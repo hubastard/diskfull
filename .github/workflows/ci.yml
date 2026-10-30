@@ -158,6 +158,12 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/hubastard/diskfull/main/install.sh | sh
           ```
 
+          Windows (PowerShell):
+
+          ```powershell
+          irm https://raw.githubusercontent.com/hubastard/diskfull/main/install.ps1 | iex
+          ```
+
           ## Downloads
 
           - **macOS** (Apple Silicon): `DiskFull-macos-arm64.zip`. The app is not notarized: if you download it with a browser, allow it the first time in System Settings › Privacy & Security › Open Anyway, or run `xattr -dr com.apple.quarantine DiskFull.app`.
@@ -177,22 +183,28 @@ jobs:
           done
           exit 1
 
-  # Run the one-line installer against the release that was just published.
+  # Run the one-line installers: on a tag against the release just published,
+  # otherwise against the latest release, so changes to the scripts get tested.
   install:
-    name: install.sh (${{ matrix.os }})
-    needs: release
+    name: install (${{ matrix.os }})
+    needs: [build, release]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.release.result != 'failure' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-latest]
+        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-latest, windows-latest]
+    env:
+      DISKFULL_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'latest' }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install
-        run: |
-          curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/install.sh" \
-            | DISKFULL_VERSION="${{ github.ref_name }}" sh
+        if: runner.os != 'Windows'
+        run: sh < install.sh # what curl ... | sh does
 
       - name: Check
+        if: runner.os != 'Windows'
         run: |
           test -x "$HOME/.local/bin/diskfull"
           if [ "$RUNNER_OS" = macOS ]; then
@@ -200,3 +212,26 @@ jobs:
           else
             if ldd "$HOME/.local/bin/diskfull" | grep 'not found'; then exit 1; fi
           fi
+
+      # irm ... | iex, in the PowerShell that ships with Windows, then in PowerShell 7
+      # (which also exercises reinstalling over an existing copy).
+      - name: Install (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: Get-Content install.ps1 -Raw | Invoke-Expression
+
+      - name: Reinstall (PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Get-Content install.ps1 -Raw | Invoke-Expression
+
+      - name: Check
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\diskfull'
+          if (-not (Test-Path "$dir\diskfull.exe")) { throw 'diskfull.exe is not installed' }
+          if (Test-Path "$dir\diskfull.exe.old") { throw 'the previous copy was left behind' }
+          if (([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -notcontains $dir) { throw "$dir is not on the user PATH" }
+          if (-not (Test-Path (Join-Path ([Environment]::GetFolderPath('Programs')) 'DiskFull.lnk'))) { throw 'no Start menu shortcut' }
+          Get-ChildItem $dir
