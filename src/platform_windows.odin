@@ -9,6 +9,7 @@ import rl "vendor:raylib"
 
 PATH_SEP :: '\\'
 FILE_MANAGER :: "Explorer"
+MOD_KEY :: "Ctrl" // for shortcuts
 WINDOW_FLAGS :: rl.ConfigFlags{.WINDOW_RESIZABLE, .MSAA_4X_HINT, .VSYNC_HINT}
 
 FONT_CANDIDATES := [?]cstring {
@@ -148,4 +149,10 @@ console_write :: proc(s: string, to_stderr: bool) {
 // Windows file names are almost always composed already.
 to_nfc :: proc(s: string, allocator := context.temp_allocator) -> string {
 	return s
+}
+
+// Where settings are saved: %APPDATA%\diskfull.
+config_dir :: proc() -> string {
+	appdata := os.get_env("APPDATA", context.temp_allocator)
+	return strings.concatenate({appdata, "\\diskfull"}, context.temp_allocator) if appdata != "" else ""
 }

@@ -121,6 +121,7 @@ the output of `--help` and `--version` appears after the prompt.
 | Tab | side panel: folder contents ↔ largest files |
 | C | color by folder ↔ by file type |
 | R | rescan |
+| Ctrl + / Ctrl - / Ctrl 0, Ctrl + scroll (Cmd on macOS) | bigger / smaller / default text size, like a browser; remembered for next time |
 
 ### See everything
 

@@ -44,6 +44,10 @@ app: App
 main :: proc() {
 	opts := parse_args(os.args[1:])
 	root, screenshot := opts.root, opts.screenshot
+	load_settings()
+	if opts.zoom != 0 {
+		ui.zoom_wanted = opts.zoom
+	}
 	ignore_child_exits()
 
 	rl.SetTraceLogLevel(.WARNING)
@@ -63,8 +67,6 @@ main :: proc() {
 	rl.SetWindowMinSize(900, 560)
 	rl.SetExitKey(.KEY_NULL)
 	rl.SetTargetFPS(60)
-	load_fonts()
-	app.layout.font = fonts[.Small]
 	app.hover_tile = -1
 
 	start_scan(root)
@@ -77,7 +79,10 @@ main :: proc() {
 		update()
 		rl.BeginDrawing()
 		rl.ClearBackground(COL_BG)
+		begin_zoom()
 		draw()
+		draw_zoom_badge()
+		end_zoom()
 		if screenshot != "" && scanner_done(app.scanner) {
 			screenshot_frames += 1
 			if screenshot_frames == 5 { // let the layout settle
@@ -134,17 +139,26 @@ start_scan :: proc(path: string) {
 }
 
 map_rect :: proc() -> rl.Rectangle {
-	w, h := f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())
-	return {4, TOP_H + 4, w - PANEL_W - 8, h - TOP_H - STATUS_H - 8}
+	w, h := view_w(), view_h()
+	return {4, TOP_H + 4, w - panel_width() - 8, h - TOP_H - STATUS_H - 8}
 }
 
 panel_rect :: proc() -> rl.Rectangle {
-	w, h := f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())
-	return {w - PANEL_W, TOP_H, PANEL_W, h - TOP_H - STATUS_H}
+	w, h := view_w(), view_h()
+	return {w - panel_width(), TOP_H, panel_width(), h - TOP_H - STATUS_H}
+}
+
+// Narrower in small views (small windows, zoomed in) so the map keeps room.
+panel_width :: proc() -> f32 {
+	return clamp(view_w() * 0.3, 280, PANEL_W)
 }
 
 update :: proc() {
 	s := app.scanner
+	if update_zoom() {
+		app.layout.font = fonts[.Small]
+		app.layout_view = nil // tile labels were fitted with the old fonts
+	}
 
 	if rl.IsFileDropped() {
 		files := rl.LoadDroppedFiles()
@@ -192,7 +206,7 @@ update :: proc() {
 	}
 
 	app.hover_tile = -1
-	mouse := rl.GetMousePosition()
+	mouse := mouse_pos()
 	if !rl.CheckCollisionPointRec(mouse, mr) {
 		return
 	}
@@ -225,7 +239,7 @@ update :: proc() {
 	// Scroll: zoom one level in toward the mouse, or back out. Trackpads send
 	// lots of small deltas, so accumulate and rate-limit.
 	now := rl.GetTime()
-	if w := rl.GetMouseWheelMove(); w != 0 {
+	if w := rl.GetMouseWheelMove(); w != 0 && !zoom_keys_down() { // with Ctrl, the wheel sets the text size
 		app.wheel += w
 		app.wheel_last = now
 	} else if now - app.wheel_last > 0.3 {
@@ -299,7 +313,7 @@ draw :: proc() {
 
 draw_progress :: proc() {
 	s := app.scanner
-	w, h := f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())
+	w, h := view_w(), view_h()
 	cw: f32 = 600
 	x, y := (w - cw) / 2, h / 2 - 120
 
@@ -388,7 +402,7 @@ draw_map :: proc() {
 }
 
 draw_top_bar :: proc() {
-	w := f32(rl.GetScreenWidth())
+	w := view_w()
 	rl.DrawRectangleRec({0, 0, w, TOP_H}, COL_PANEL)
 	rl.DrawRectangleRec({0, TOP_H - 1, w, 1}, COL_LINE)
 
@@ -604,7 +618,7 @@ draw_panel :: proc() {
 }
 
 draw_status :: proc() {
-	w, h := f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())
+	w, h := view_w(), view_h()
 	y := h - STATUS_H
 	rl.DrawRectangleRec({0, y, w, STATUS_H}, COL_PANEL)
 	rl.DrawRectangleRec({0, y, w, 1}, COL_LINE)
@@ -621,7 +635,7 @@ draw_status :: proc() {
 	if hovered != nil {
 		text(fit(node_path(hovered), left_w, .Small), 12, y + 7, .Small)
 	} else {
-		text(fit("Click: show in " + FILE_MANAGER + "   ·   Right-click / scroll up: zoom in   ·   Backspace / scroll down: zoom out   ·   Tab: largest files   ·   R: rescan   ·   Drop a folder to scan it", left_w, .Small), 12, y + 7, .Small, COL_DIM)
+		text(fit("Click: show in " + FILE_MANAGER + "   ·   Right-click / scroll up: zoom in   ·   Backspace / scroll down: zoom out   ·   Tab: largest files   ·   R: rescan   ·   " + MOD_KEY + " +/-: text size   ·   Drop a folder to scan it", left_w, .Small), 12, y + 7, .Small, COL_DIM)
 	}
 }
 
@@ -689,8 +703,8 @@ draw_tooltip :: proc() {
 	bw += 24
 	bh += 8
 
-	sw, sh := f32(rl.GetScreenWidth()), f32(rl.GetScreenHeight())
-	m := rl.GetMousePosition()
+	sw, sh := view_w(), view_h()
+	m := mouse_pos()
 	bx, by := m.x + 18, m.y + 18
 	if bx + bw > sw - 8 {
 		bx = m.x - bw - 12

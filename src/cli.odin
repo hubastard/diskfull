@@ -2,6 +2,7 @@ package diskfull
 
 import "core:fmt"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 
 // Set by build.sh / build.bat from `git describe`, e.g. "0.1.1" for a release.
@@ -10,6 +11,7 @@ VERSION :: #config(VERSION, "dev")
 Options :: struct {
 	root:       string,
 	screenshot: string, // --screenshot <file.png>: scan, save one frame and quit (used by CI)
+	zoom:       f32, // --zoom <percent>, 0 when not given (the saved zoom is used)
 }
 
 // Parses the command line. --help, --version and usage errors print and exit
@@ -39,6 +41,16 @@ parse_args :: proc(args: []string) -> (opts: Options) {
 			}
 			i += 1
 			opts.screenshot = args[i]
+		case arg == "--zoom":
+			percent, ok := 0, false
+			if i + 1 < len(args) {
+				i += 1
+				percent, ok = strconv.parse_int(strings.trim_suffix(args[i], "%"), 10)
+			}
+			if !ok || percent < int(ZOOM_MIN * 100) || percent > int(ZOOM_MAX * 100) {
+				usage_error(fmt.tprintf("--zoom needs a percentage from %d to %d", int(ZOOM_MIN * 100), int(ZOOM_MAX * 100)))
+			}
+			opts.zoom = f32(percent) / 100
 		case ODIN_OS == .Darwin && strings.has_prefix(arg, "-psn_"):
 		// Older macOS versions pass a process serial number to apps opened in Finder.
 		case:
@@ -62,17 +74,23 @@ opens a window to explore it.
 Options:
   -h, --help             Show this help and exit.
   -v, --version          Show the version and exit.
+      --zoom PERCENT     Start with the text and interface at this size
+                         (50 to 300, default: the last size you chose).
       --screenshot FILE  Scan, save the window as a PNG image to FILE and exit.
 
 In the window: hover to identify, click to show in %s, right-click or
 scroll to zoom in and out, Tab for the largest files, C to switch colors,
-R to rescan.
+R to rescan. %s and + or -, or %s and the scroll wheel, change the text
+size; %s 0 resets it.
 
 https://github.com/hubastard/diskfull
 `,
 		VERSION,
 		default_root(),
 		FILE_MANAGER,
+		MOD_KEY,
+		MOD_KEY,
+		MOD_KEY,
 	)
 }
 

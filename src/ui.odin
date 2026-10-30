@@ -22,8 +22,18 @@ Font_Size :: enum {
 }
 
 fonts: #sparse[Font_Size]rl.Font
+fonts_loaded: bool // from a file, so they must be unloaded (not raylib's default font)
 
-load_fonts :: proc() {
+// Loads the fonts rasterized at `pixel` screen pixels per view unit, replacing
+// the ones loaded before.
+load_fonts :: proc(pixel: f32) {
+	if fonts_loaded {
+		for f in fonts {
+			rl.UnloadFont(f)
+		}
+		fonts_loaded = false
+	}
+
 	codepoints := make([dynamic]rune, context.temp_allocator)
 	for r in rune(32) ..= 126 {append(&codepoints, r)}
 	for r in rune(0xA0) ..= 0x24F {append(&codepoints, r)}   // Latin-1, Latin Extended-A/B
@@ -53,16 +63,18 @@ load_fonts :: proc() {
 	// (they are drawn as '?'). Keep the log quiet while loading.
 	rl.SetTraceLogLevel(.ERROR)
 	defer rl.SetTraceLogLevel(.WARNING)
-	scale := max(rl.GetWindowScaleDPI().x, 1)
 	for size in Font_Size {
-		px := i32(math.round(f32(size) * scale))
+		px := i32(math.round(f32(size) * pixel))
 		fonts[size] = rl.LoadFontFromMemory(rl.GetFileExtension(path), data, data_size, px, raw_data(codepoints), i32(len(codepoints)))
 		rl.SetTextureFilter(fonts[size].texture, .BILINEAR)
 	}
+	fonts_loaded = true
 }
 
 text :: proc(s: cstring, x, y: f32, size: Font_Size = .Normal, color := COL_TEXT) {
-	rl.DrawTextEx(fonts[size], s, {math.round(x), math.round(y)}, f32(size), 0, color)
+	// Start on a whole screen pixel, where glyphs are sharpest.
+	p := ui.pixel
+	rl.DrawTextEx(fonts[size], s, {math.round(x * p) / p, math.round(y * p) / p}, f32(size), 0, color)
 }
 
 text_width :: proc(s: cstring, size: Font_Size = .Normal) -> f32 {
@@ -234,7 +246,7 @@ Button :: struct {
 }
 
 button :: proc(r: rl.Rectangle) -> (b: Button) {
-	b.hover = rl.CheckCollisionPointRec(rl.GetMousePosition(), r)
+	b.hover = rl.CheckCollisionPointRec(mouse_pos(), r)
 	b.clicked = b.hover && rl.IsMouseButtonPressed(.LEFT)
 	b.right_clicked = b.hover && rl.IsMouseButtonPressed(.RIGHT)
 	return

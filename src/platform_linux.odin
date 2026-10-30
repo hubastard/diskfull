@@ -7,6 +7,7 @@ import "core:sys/posix"
 import rl "vendor:raylib"
 
 FILE_MANAGER :: "file manager"
+MOD_KEY :: "Ctrl" // for shortcuts
 WINDOW_FLAGS :: rl.ConfigFlags{.WINDOW_RESIZABLE, .MSAA_4X_HINT, .VSYNC_HINT}
 
 FONT_CANDIDATES := [?]cstring {
@@ -179,4 +180,15 @@ scan_last :: proc(dir_path, name: string) -> bool {
 
 adjust_file :: proc(s: ^Scanner, dirfd: posix.FD, name: cstring, st: ^posix.stat_t, bytes: i64) -> (i64, Node_Flags) {
 	return bytes, {}
+}
+
+// Where settings are saved: $XDG_CONFIG_HOME/diskfull or ~/.config/diskfull.
+config_dir :: proc() -> string {
+	if xdg := os.get_env("XDG_CONFIG_HOME", context.temp_allocator); xdg != "" {
+		return strings.concatenate({xdg, "/diskfull"}, context.temp_allocator)
+	}
+	if home := os.get_env("HOME", context.temp_allocator); home != "" {
+		return strings.concatenate({home, "/.config/diskfull"}, context.temp_allocator)
+	}
+	return ""
 }

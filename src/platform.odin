@@ -2,10 +2,11 @@ package diskfull
 
 // Each platform_<os>.odin file provides:
 //
-//   PATH_SEP, FILE_MANAGER, WINDOW_FLAGS, FONT_CANDIDATES
+//   PATH_SEP, FILE_MANAGER, MOD_KEY, WINDOW_FLAGS, FONT_CANDIDATES
 //   PERMISSION_HINT, DENIED_HINT, HIDDEN_HINT, PLATFORM_NOTES
 //   default_root, absolute_path, volume_info, path_id, scan_dir
-//   reveal_in_file_manager, open_folder, ignore_child_exits, to_nfc, console_write
+//   reveal_in_file_manager, open_folder, ignore_child_exits, to_nfc, console_write,
+//   config_dir
 
 Volume_Info :: struct {
 	total:     i64,

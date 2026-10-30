@@ -2,12 +2,14 @@
 package diskfull
 
 import "base:intrinsics"
+import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:sys/posix"
 import rl "vendor:raylib"
 
 FILE_MANAGER :: "Finder"
+MOD_KEY :: "Cmd" // for shortcuts
 WINDOW_FLAGS :: rl.ConfigFlags{.WINDOW_RESIZABLE, .WINDOW_HIGHDPI, .MSAA_4X_HINT, .VSYNC_HINT}
 
 FONT_CANDIDATES := [?]cstring {
@@ -292,4 +294,10 @@ has_combining_mark :: proc(s: string) -> bool {
 		}
 	}
 	return false
+}
+
+// Where settings are saved.
+config_dir :: proc() -> string {
+	home := os.get_env("HOME", context.temp_allocator)
+	return strings.concatenate({home, "/Library/Application Support/diskfull"}, context.temp_allocator) if home != "" else ""
 }
