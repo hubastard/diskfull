@@ -35,6 +35,7 @@ App :: struct {
 	disk:         Volume_Info,
 	disk_ok:      bool,
 	whole_disk:   bool, // scanning "/", so used space minus scanned space is meaningful
+	live:         bool, // --live: show the map while the scan runs, not a progress screen
 	hover_tile:   int,
 	panel_hover:  ^Node,
 	wheel:        f32,
@@ -51,6 +52,7 @@ main :: proc() {
 	if opts.zoom != 0 {
 		ui.zoom_wanted = opts.zoom
 	}
+	app.live = opts.live
 	ignore_child_exits()
 
 	rl.SetTraceLogLevel(.WARNING)
@@ -177,11 +179,14 @@ update :: proc() {
 		start_scan(strings.clone(s.root_path, context.temp_allocator))
 		return
 	}
+	// With --live, the map and panel show the tree while it is being scanned.
+	scanning := !scanner_done(s)
+	if scanning && !app.live {
+		return
+	}
 	if app.view == nil {
 		app.view = s.root
 	}
-	// The map and panel show the tree while it is being scanned.
-	scanning := !scanner_done(s)
 
 	if (rl.IsKeyPressed(.BACKSPACE) || rl.IsKeyPressed(.ESCAPE) || rl.IsKeyPressed(.UP)) && app.view.parent != nil {
 		app.view = app.view.parent
@@ -302,6 +307,10 @@ collect_largest :: proc(n: ^Node) {
 }
 
 draw :: proc() {
+	if !scanner_done(app.scanner) && !app.live {
+		draw_progress()
+		return
+	}
 	if app.view == nil {
 		return
 	}
@@ -312,6 +321,57 @@ draw :: proc() {
 	draw_tooltip()
 }
 
+draw_progress :: proc() {
+	s := app.scanner
+	w, h := view_w(), view_h()
+	cw: f32 = 600
+	x, y := (w - cw) / 2, h / 2 - 120
+
+	files := sync.atomic_load(&s.files)
+	dirs := sync.atomic_load(&s.dirs)
+	bytes := sync.atomic_load(&s.bytes)
+	denied := sync.atomic_load(&s.denied)
+	elapsed := time.duration_seconds(time.tick_since(s.start))
+
+	text(fit(fmt_scanning(s.root_path), cw, .Large), x, y, .Large)
+	y += 40
+
+	bar := rl.Rectangle{x, y, cw, 8}
+	rl.DrawRectangleRounded(bar, 1, 8, COL_LINE)
+	if app.disk_ok && app.whole_disk {
+		used := app.disk.used
+		frac := clamp(f32(f64(bytes) / f64(max(used, 1))), 0.02, 0.99)
+		rl.DrawRectangleRounded({x, y, cw * frac, 8}, 1, 8, COL_ACCENT)
+	} else {
+		p := f32(elapsed * 0.6 - f64(int(elapsed * 0.6)))
+		rl.DrawRectangleRounded({x + (cw - 120) * p, y, 120, 8}, 1, 8, COL_ACCENT)
+	}
+	y += 26
+
+	text(cs("%s found   ·   %s files   ·   %s folders   ·   %.0f s", format_size(bytes), format_count(files), format_count(dirs), elapsed), x, y)
+	y += 24
+	if cur := sync.atomic_load(&s.current); cur != nil {
+		text(fit(node_path(cur), cw, .Small), x, y, .Small, COL_DIM)
+	}
+	y += 30
+	if denied > 0 {
+		text(fmt_denied(denied), x, y, .Small, COL_WARN)
+		y += 18
+	}
+	for line in wrap(PERMISSION_HINT, cw, .Small) {
+		text(line, x, y, .Small, COL_DIM)
+		y += 16
+	}
+}
+
+fmt_scanning :: proc(path: string) -> string {
+	return strings.concatenate({"Scanning ", path, " …"}, context.temp_allocator)
+}
+
+fmt_denied :: proc(denied: i64) -> cstring {
+	return cs("%s could not be read", "1 folder" if denied == 1 else fmt.tprintf("%s folders", format_count(denied)))
+}
+
 draw_map :: proc() {
 	tiles := app.layout.tiles[:]
 	if len(tiles) == 0 && !scanner_done(app.scanner) {
@@ -319,7 +379,7 @@ draw_map :: proc() {
 		mr := map_rect()
 		cw := min(mr.width - 40, 600)
 		x, y := mr.x + (mr.width - cw) / 2, mr.y + mr.height / 2 - 40
-		text(fit(strings.concatenate({"Scanning ", app.scanner.root_path, " …"}, context.temp_allocator), cw, .Large), x, y, .Large)
+		text(fit(fmt_scanning(app.scanner.root_path), cw, .Large), x, y, .Large)
 		y += 36
 		for line in wrap(PERMISSION_HINT, cw, .Small) {
 			text(line, x, y, .Small, COL_DIM)
@@ -490,7 +550,7 @@ draw_panel :: proc() {
 		}
 	}
 	if denied > 0 {
-		text(cs("%s could not be read", "1 folder" if denied == 1 else fmt.tprintf("%s folders", format_count(denied))), x, y, .Small, COL_WARN)
+		text(fmt_denied(denied), x, y, .Small, COL_WARN)
 		y += 15
 		text(DENIED_HINT, x, y, .Small, COL_DIM)
 		y += 21

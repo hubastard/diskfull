@@ -23,8 +23,8 @@ reveal them in Finder, Explorer or your file manager.
 
 ## Features
 
-- **Fast**: a multi-threaded scan, and the treemap fills in while it runs, so the biggest
-  folders show up within a second or two. You can hover, click and zoom right away.
+- **Fast**: a multi-threaded scan, with a live progress view while it runs, or
+  `--live` to watch the treemap fill in as folders are read.
 - **True sizes**: counts the space allocated on disk, so sparse and compressed files,
   APFS clones and hard links are counted for what they really use, and only once.
 - **Finds hidden space**: on a whole-disk scan, compares what the folders add up to
@@ -103,6 +103,7 @@ X11 or XWayland) and Windows (x64; ARM64 runs it under emulation). Unzip and run
 ```sh
 diskfull                 # scan the whole system disk (/ or C:\)
 diskfull ~/Downloads     # scan one folder
+diskfull --live          # draw the treemap while the scan runs
 diskfull --help          # options (--version prints the version)
 ```
 

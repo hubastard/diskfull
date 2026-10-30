@@ -30,6 +30,11 @@ command_line :: proc(t: ^testing.T) {
 	opts := df.parse_args({})
 	testing.expect_value(t, opts.root, df.default_root())
 	testing.expect_value(t, opts.screenshot, "")
+	testing.expect_value(t, opts.live, false)
+
+	opts = df.parse_args({"--live", "some/folder"})
+	testing.expect_value(t, opts.live, true)
+	testing.expect_value(t, opts.root, "some/folder")
 
 	opts = df.parse_args({"--screenshot", "out.png", "some/folder"})
 	testing.expect_value(t, opts.root, "some/folder")

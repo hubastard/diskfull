@@ -12,6 +12,7 @@ Options :: struct {
 	root:       string,
 	screenshot: string, // --screenshot <file.png>: scan, save one frame and quit (used by CI)
 	zoom:       f32, // --zoom <percent>, 0 when not given (the saved zoom is used)
+	live:       bool, // --live: show the treemap while the scan runs
 }
 
 // Parses the command line. --help, --version and usage errors print and exit
@@ -35,6 +36,8 @@ parse_args :: proc(args: []string) -> (opts: Options) {
 		case arg == "-v" || arg == "--version":
 			console_write(fmt.tprintf("diskfull %s\n", VERSION), false)
 			os.exit(0)
+		case arg == "--live":
+			opts.live = true
 		case arg == "--screenshot":
 			if i + 1 >= len(args) {
 				usage_error("--screenshot needs a file name")
@@ -74,6 +77,8 @@ opens a window to explore it.
 Options:
   -h, --help             Show this help and exit.
   -v, --version          Show the version and exit.
+      --live             Show the treemap while the scan runs and fill it in
+                         as folders are read, instead of a progress screen.
       --zoom PERCENT     Start with the text and interface at this size
                          (50 to 300, default: the last size you chose).
       --screenshot FILE  Scan, save the window as a PNG image to FILE and exit.
