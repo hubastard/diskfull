@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ODIN_RELEASE: dev-2026-09
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x64, os: ubuntu-22.04 } # oldest glibc we support: 2.35
+          - { name: linux-arm64, os: ubuntu-22.04-arm }
+          - { name: windows-x64, os: windows-latest }
+          - { name: macos-arm64, os: macos-latest }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: laytan/setup-odin@v2
+        with:
+          release: ${{ env.ODIN_RELEASE }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # clang links Odin programs; X11/GL/Xvfb/fonts are for the screenshot test.
+          sudo apt-get install -y --no-install-recommends clang libx11-dev \
+            libxrandr2 libxinerama1 libxcursor1 libxi6 libgl1 libgl1-mesa-dri \
+            xvfb xauth fonts-dejavu-core
+
+      - name: Check
+        run: odin check . -vet -strict-style
+
+      - name: Test
+        run: odin test tests -vet -strict-style
+
+      - name: Build
+        if: runner.os != 'Windows'
+        run: ./build.sh
+
+      - name: Build
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: build.bat
+
+      # Run the real app on the Odin install folder and save what it draws.
+      - name: Screenshot
+        if: runner.os == 'Linux'
+        run: xvfb-run -a -s "-screen 0 1440x900x24" ./diskfull --screenshot "screenshot-${{ matrix.name }}.png" "$(odin root)"
+
+      - name: Screenshot (best effort, the runner may have no GUI session)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: ./diskfull --screenshot "screenshot-${{ matrix.name }}.png" "$(odin root)"
+
+      - name: Screenshot (best effort, software OpenGL from Mesa)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          # Hosted runners have no GPU and Windows' own OpenGL is 1.1: use Mesa's.
+          gh release download -R pal1000/mesa-dist-win --pattern "mesa3d-*-release-msvc.7z" --output mesa.7z
+          7z x mesa.7z -omesa -y | Out-Null
+          New-Item -ItemType Directory shot | Out-Null
+          Copy-Item diskfull.exe, mesa\x64\*.dll shot\
+          $root = (odin root).Trim().TrimEnd('\', '/')
+          # diskfull.exe is a GUI program: wait for it explicitly.
+          $p = Start-Process shot\diskfull.exe -ArgumentList '--screenshot', "screenshot-${{ matrix.name }}.png", "`"$root`"" -Wait -PassThru
+          exit $p.ExitCode
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshot-${{ matrix.name }}
+          path: screenshot-*.png
+          if-no-files-found: warn
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir dist
+          case "${{ runner.os }}" in
+            Linux)   tar -czf "dist/diskfull-${{ matrix.name }}.tar.gz" diskfull README.md LICENSE ;;
+            macOS)   ditto -c -k --keepParent DiskFull.app "dist/DiskFull-${{ matrix.name }}.zip" ;;
+            Windows) 7z a "dist/diskfull-${{ matrix.name }}.zip" diskfull.exe README.md LICENSE ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          ## Downloads
+
+          - **macOS** (Apple Silicon): `DiskFull-macos-arm64.zip`. The app is not notarized: the first time, allow it in System Settings › Privacy & Security › Open Anyway, or run `xattr -dr com.apple.quarantine DiskFull.app`.
+          - **Windows** (x64): `diskfull-windows-x64.zip`
+          - **Linux** (x64, arm64): `diskfull-linux-*.tar.gz`. Needs glibc 2.35+ and X11 (or XWayland).
+          EOF
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+            --title "diskfull $GITHUB_REF_NAME" --notes-file notes.md --generate-notes \
+          || gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
