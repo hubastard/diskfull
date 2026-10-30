@@ -17,18 +17,16 @@ scan_dir :: proc(w: ^Worker, dir: ^Node, path: ^[dynamic]u8, entries, subdirs: ^
 	s := w.scanner
 	begin_dir(w, dir, path, entries, subdirs)
 
-	fd := posix.open(strings.clone_to_cstring(string(path[:]), context.temp_allocator), {.DIRECTORY, .NOFOLLOW, .CLOEXEC})
-	if fd < 0 {
-		mark_denied(s, dir)
-		return
-	}
-	dirp := posix.fdopendir(fd)
+	// opendir rather than open(O_DIRECTORY | O_NOFOLLOW): core:sys/posix has the
+	// x86 values of those flags on every Linux architecture, which breaks arm64.
+	// Only entries that lstat says are real directories get here anyway.
+	dirp := posix.opendir(strings.clone_to_cstring(string(path[:]), context.temp_allocator))
 	if dirp == nil {
-		posix.close(fd)
 		mark_denied(s, dir)
 		return
 	}
 	defer posix.closedir(dirp)
+	fd := posix.dirfd(dirp)
 
 	dir_st: posix.stat_t
 	posix.fstat(fd, &dir_st)

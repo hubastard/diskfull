@@ -54,8 +54,11 @@ jobs:
         run: |
           git clone --depth 1 --branch 6.0 https://github.com/raysan5/raylib.git "$RUNNER_TEMP/raylib"
           make -C "$RUNNER_TEMP/raylib/src" -j"$(nproc)" PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC GLFW_LINUX_ENABLE_WAYLAND=FALSE
-          dir="$(odin root)/vendor/raylib/linux$([ "$(uname -m)" = aarch64 ] && echo -arm64)"
-          cp "$RUNNER_TEMP/raylib/src/libraylib.a" "$dir/libraylib.a"
+          case "$(uname -m)" in
+            aarch64) dir=linux-arm64 ;;
+            *)       dir=linux ;;
+          esac
+          cp "$RUNNER_TEMP/raylib/src/libraylib.a" "$(odin root)/vendor/raylib/$dir/libraylib.a"
 
       - name: Check
         run: odin check . -vet -strict-style
