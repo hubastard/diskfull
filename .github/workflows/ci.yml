@@ -41,10 +41,21 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          # clang links Odin programs; X11/GL/Xvfb/fonts are for the screenshot test.
-          sudo apt-get install -y --no-install-recommends clang libx11-dev \
-            libxrandr2 libxinerama1 libxcursor1 libxi6 libgl1 libgl1-mesa-dri \
-            xvfb xauth fonts-dejavu-core
+          # clang links Odin programs, the -dev packages build raylib,
+          # Mesa/Xvfb/fonts are for the screenshot test.
+          sudo apt-get install -y --no-install-recommends clang make \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev \
+            libgl1-mesa-dev libgl1-mesa-dri xvfb xauth fonts-dejavu-core
+
+      # Odin's prebuilt Linux raylib needs glibc 2.38+. Building it here keeps
+      # our Linux binaries working on older distros (glibc 2.35+).
+      - name: Build raylib
+        if: runner.os == 'Linux'
+        run: |
+          git clone --depth 1 --branch 6.0 https://github.com/raysan5/raylib.git "$RUNNER_TEMP/raylib"
+          make -C "$RUNNER_TEMP/raylib/src" -j"$(nproc)" PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC GLFW_LINUX_ENABLE_WAYLAND=FALSE
+          dir="$(odin root)/vendor/raylib/linux$([ "$(uname -m)" = aarch64 ] && echo -arm64)"
+          cp "$RUNNER_TEMP/raylib/src/libraylib.a" "$dir/libraylib.a"
 
       - name: Check
         run: odin check . -vet -strict-style
