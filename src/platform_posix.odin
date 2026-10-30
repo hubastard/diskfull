@@ -2,6 +2,7 @@
 package diskfull
 
 import "core:c/libc"
+import "core:fmt"
 import "core:strings"
 import "core:sys/posix"
 
@@ -14,6 +15,15 @@ absolute_path :: proc(path: string) -> string {
 	}
 	defer libc.free(rawptr(real))
 	return strings.clone(string(real), context.temp_allocator)
+}
+
+// Prints text for --help, --version and usage errors.
+console_write :: proc(s: string, to_stderr: bool) {
+	if to_stderr {
+		fmt.eprint(s)
+	} else {
+		fmt.print(s)
+	}
 }
 
 ignore_child_exits :: proc() {

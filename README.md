@@ -102,10 +102,14 @@ X11 or XWayland) and Windows (x64; ARM64 runs it under emulation). Unzip and run
 ```sh
 diskfull                 # scan the whole system disk (/ or C:\)
 diskfull ~/Downloads     # scan one folder
+diskfull --help          # options (--version prints the version)
 ```
 
 You can also open `DiskFull.app` or `diskfull.exe` directly, and drop any folder on the
 window to scan it.
+
+On Windows, `diskfull.exe` is a windowed program, so the terminal does not wait for it:
+the output of `--help` and `--version` appears after the prompt.
 
 | Action | |
 |---|---|

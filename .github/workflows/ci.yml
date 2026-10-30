@@ -31,6 +31,8 @@ jobs:
           - { name: macos-arm64, os: macos-latest }
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags, for the version from git describe
 
       - uses: laytan/setup-odin@v2
         with:
@@ -78,6 +80,25 @@ jobs:
         if: runner.os == 'Windows'
         shell: cmd
         run: build.bat
+
+      # These must print and exit before opening a window: the Linux and macOS
+      # runners have no display, so trying to open one would fail.
+      - name: Command line
+        shell: bash
+        run: |
+          exe=./diskfull
+          if [ "$RUNNER_OS" = Windows ]; then exe=./diskfull.exe; fi
+          version=$("$exe" --version)
+          echo "$version"
+          case "$GITHUB_REF" in
+          refs/tags/v*) test "$version" = "diskfull ${GITHUB_REF_NAME#v}" ;;
+          *) case "$version" in "diskfull "[0-9]*) ;; *) exit 1 ;; esac ;;
+          esac
+          "$exe" --help | grep -q -- '--version'
+          code=0
+          "$exe" --no-such-option 2> err.txt || code=$?
+          test "$code" = 2
+          grep -q "unknown option '--no-such-option'" err.txt
 
       # Run the real app on the Odin install folder and save what it draws.
       - name: Screenshot

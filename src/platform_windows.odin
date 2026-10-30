@@ -113,6 +113,38 @@ run_detached :: proc(command_line: string) {
 
 ignore_child_exits :: proc() {}
 
+ATTACH_PARENT_PROCESS :: ~win.DWORD(0)
+
+// Prints text for --help, --version and usage errors. diskfull.exe is a GUI
+// program, so it only has standard handles when its output is redirected;
+// otherwise it borrows the console of the terminal that started it. Terminals
+// do not wait for GUI programs, so that text shows up after the next prompt.
+console_write :: proc(s: string, to_stderr: bool) {
+	which := win.STD_ERROR_HANDLE if to_stderr else win.STD_OUTPUT_HANDLE
+	text := s
+	h := win.GetStdHandle(which)
+	if h == nil || h == win.INVALID_HANDLE_VALUE {
+		// Fails when started from Explorer: there is no console to print to.
+		if win.AttachConsole(ATTACH_PARENT_PROCESS) {
+			text = strings.concatenate({"\n", s}, context.temp_allocator) // the prompt is already printed
+		}
+		h = win.GetStdHandle(which)
+		if h == nil || h == win.INVALID_HANDLE_VALUE {
+			h = win.CreateFileW(win.L("CONOUT$"), win.GENERIC_WRITE, win.FILE_SHARE_WRITE, nil, win.OPEN_EXISTING, 0, nil)
+		}
+		if h == nil || h == win.INVALID_HANDLE_VALUE {
+			return
+		}
+	}
+	written, mode: win.DWORD
+	if win.GetConsoleMode(h, &mode) {
+		w := win.utf8_to_utf16(text, context.temp_allocator)
+		win.WriteConsoleW(h, raw_data(w), win.DWORD(len(w)), &written, nil)
+	} else {
+		win.WriteFile(h, raw_data(text), win.DWORD(len(text)), &written, nil)
+	}
+}
+
 // Windows file names are almost always composed already.
 to_nfc :: proc(s: string, allocator := context.temp_allocator) -> string {
 	return s

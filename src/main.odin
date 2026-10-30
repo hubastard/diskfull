@@ -42,17 +42,8 @@ App :: struct {
 app: App
 
 main :: proc() {
-	root := default_root()
-	screenshot := "" // --screenshot <file.png>: scan, save one frame and quit (used by CI)
-	args := os.args[1:]
-	for i := 0; i < len(args); i += 1 {
-		if args[i] == "--screenshot" && i + 1 < len(args) {
-			screenshot = args[i + 1]
-			i += 1
-		} else if !strings.has_prefix(args[i], "-") {
-			root = args[i]
-		}
-	}
+	opts := parse_args(os.args[1:])
+	root, screenshot := opts.root, opts.screenshot
 	ignore_child_exits()
 
 	rl.SetTraceLogLevel(.WARNING)

@@ -26,6 +26,24 @@ formatting :: proc(t: ^testing.T) {
 }
 
 @(test)
+command_line :: proc(t: ^testing.T) {
+	opts := df.parse_args({})
+	testing.expect_value(t, opts.root, df.default_root())
+	testing.expect_value(t, opts.screenshot, "")
+
+	opts = df.parse_args({"--screenshot", "out.png", "some/folder"})
+	testing.expect_value(t, opts.root, "some/folder")
+	testing.expect_value(t, opts.screenshot, "out.png")
+
+	opts = df.parse_args({"--", "--help"}) // a folder named --help
+	testing.expect_value(t, opts.root, "--help")
+
+	help := df.help_text()
+	testing.expect(t, strings.has_prefix(help, "diskfull " + df.VERSION + "\n"))
+	testing.expect(t, strings.contains(help, "--version"))
+}
+
+@(test)
 names_are_composed_for_display :: proc(t: ^testing.T) {
 	testing.expect_value(t, df.to_nfc("Résumé.pdf"), "Résumé.pdf")
 	testing.expect_value(t, df.to_nfc("plain"), "plain")
