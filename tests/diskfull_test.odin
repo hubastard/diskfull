@@ -1,6 +1,6 @@
 package diskfull_tests
 
-import df ".."
+import df "../src"
 import "core:fmt"
 import "core:mem/virtual"
 import "core:os"

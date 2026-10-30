@@ -61,7 +61,7 @@ jobs:
           cp "$RUNNER_TEMP/raylib/src/libraylib.a" "$(odin root)/vendor/raylib/$dir/libraylib.a"
 
       - name: Check
-        run: odin check . -vet -strict-style
+        run: odin check src -vet -strict-style
 
       - name: Lint shell scripts
         if: runner.os == 'Linux'

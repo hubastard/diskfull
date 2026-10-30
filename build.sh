@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")"
 
-odin build . -o:speed -out:diskfull
+odin build src -o:speed -out:diskfull
 
 if [ "$(uname)" != "Darwin" ]; then
 	echo "Built ./diskfull"
