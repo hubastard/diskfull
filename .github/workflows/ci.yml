@@ -42,10 +42,10 @@ jobs:
         run: |
           sudo apt-get update
           # clang links Odin programs, the -dev packages build raylib,
-          # Mesa/Xvfb/fonts are for the screenshot test.
+          # Mesa/Xvfb/fonts are for the screenshot test, shellcheck lints the scripts.
           sudo apt-get install -y --no-install-recommends clang make \
             libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev \
-            libgl1-mesa-dev libgl1-mesa-dri xvfb xauth fonts-dejavu-core
+            libgl1-mesa-dev libgl1-mesa-dri xvfb xauth fonts-dejavu-core shellcheck
 
       # Odin's prebuilt Linux raylib needs glibc 2.38+. Building it here keeps
       # our Linux binaries working on older distros (glibc 2.35+).
@@ -62,6 +62,10 @@ jobs:
 
       - name: Check
         run: odin check . -vet -strict-style
+
+      - name: Lint shell scripts
+        if: runner.os == 'Linux'
+        run: shellcheck install.sh build.sh
 
       - name: Test
         run: odin test tests -vet -strict-style
@@ -143,13 +147,47 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # install.sh checks downloads against this.
+          (cd dist && sha256sum -- * > SHA256SUMS)
           cat > notes.md <<'EOF'
+          ## Install
+
+          macOS and Linux:
+
+          ```sh
+          curl -fsSL https://raw.githubusercontent.com/hubastard/diskfull/main/install.sh | sh
+          ```
+
           ## Downloads
 
-          - **macOS** (Apple Silicon): `DiskFull-macos-arm64.zip`. The app is not notarized: the first time, allow it in System Settings › Privacy & Security › Open Anyway, or run `xattr -dr com.apple.quarantine DiskFull.app`.
+          - **macOS** (Apple Silicon): `DiskFull-macos-arm64.zip`. The app is not notarized: if you download it with a browser, allow it the first time in System Settings › Privacy & Security › Open Anyway, or run `xattr -dr com.apple.quarantine DiskFull.app`.
           - **Windows** (x64): `diskfull-windows-x64.zip`
           - **Linux** (x64, arm64): `diskfull-linux-*.tar.gz`. Needs glibc 2.35+ and X11 (or XWayland).
           EOF
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
             --title "diskfull $GITHUB_REF_NAME" --notes-file notes.md --generate-notes \
           || gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+
+  # Run the one-line installer against the release that was just published.
+  install:
+    name: install.sh (${{ matrix.os }})
+    needs: release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-latest]
+    steps:
+      - name: Install
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/install.sh" \
+            | DISKFULL_VERSION="${{ github.ref_name }}" sh
+
+      - name: Check
+        run: |
+          test -x "$HOME/.local/bin/diskfull"
+          if [ "$RUNNER_OS" = macOS ]; then
+            codesign --verify /Applications/DiskFull.app
+          else
+            if ldd "$HOME/.local/bin/diskfull" | grep 'not found'; then exit 1; fi
+          fi

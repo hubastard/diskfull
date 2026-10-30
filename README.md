@@ -5,13 +5,30 @@
 Disk space treemap for macOS, Linux and Windows, written in Odin + raylib. Every box
 is a file or folder, sized by the space it really takes on disk.
 
-## Download
+## Install
 
-Prebuilt apps for macOS (Apple Silicon), Windows (x64) and Linux (x64, arm64) are on the
-[Releases page](https://github.com/hubastard/diskfull/releases).
+macOS (Apple Silicon) and Linux (x64, arm64):
 
-The macOS app is not notarized: the first time, allow it in System Settings ›
-Privacy & Security › Open Anyway, or run `xattr -dr com.apple.quarantine DiskFull.app`.
+```sh
+curl -fsSL https://raw.githubusercontent.com/hubastard/diskfull/main/install.sh | sh
+```
+
+On macOS this puts `DiskFull.app` in `/Applications`, plus a `diskfull` command in
+`~/.local/bin`; on Linux, just the command (`/usr/local/bin` when run as root). Linux
+needs glibc 2.35+ and X11 or XWayland. Options:
+
+```sh
+curl -fsSL .../install.sh | DISKFULL_VERSION=v1.0.0 sh        # a specific release
+curl -fsSL .../install.sh | DISKFULL_BIN_DIR=/usr/local/bin sh
+```
+
+To uninstall, delete `~/.local/bin/diskfull` (and `/Applications/DiskFull.app`).
+
+Windows, or to download by hand: the
+[Releases page](https://github.com/hubastard/diskfull/releases) has every build. A
+macOS app downloaded with a browser is quarantined because it is not notarized: the
+first time, allow it in System Settings › Privacy & Security › Open Anyway, or run
+`xattr -dr com.apple.quarantine DiskFull.app`.
 
 ## Build & run
 
@@ -85,7 +102,7 @@ odin test tests     # unit tests, including a scan of a generated folder tree
 CI (`.github/workflows/ci.yml`) checks, tests and builds on Linux (x64, arm64),
 Windows and macOS for every push and pull request, and saves a screenshot of the
 running app for each platform as a workflow artifact. Pushing a `v*` tag publishes
-the builds as a GitHub release:
+the builds as a GitHub release, then checks that `install.sh` installs it:
 
 ```sh
 git tag v1.0.0 && git push origin v1.0.0
