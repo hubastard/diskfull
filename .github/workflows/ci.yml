@@ -164,9 +164,18 @@ jobs:
           - **Windows** (x64): `diskfull-windows-x64.zip`
           - **Linux** (x64, arm64): `diskfull-linux-*.tar.gz`. Needs glibc 2.35+ and X11 (or XWayland).
           EOF
-          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
-            --title "diskfull $GITHUB_REF_NAME" --notes-file notes.md --generate-notes \
-          || gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          # The GitHub API sometimes answers 500: retry, and complete a release
+          # that an earlier attempt (or run) already created.
+          for attempt in 1 2 3 4 5; do
+            if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber && exit 0
+            else
+              gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+                --title "diskfull $GITHUB_REF_NAME" --notes-file notes.md --generate-notes && exit 0
+            fi
+            sleep $((attempt * 15))
+          done
+          exit 1
 
   # Run the one-line installer against the release that was just published.
   install:
